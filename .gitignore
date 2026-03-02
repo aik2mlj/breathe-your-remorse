@@ -1,0 +1,11 @@
+*.pdf
+*.txt
+lib/**
+!.gitkeep
+# examples/
+*.wav
+*.mp4
+*.unitypackage
+imgui.ini
+*.zip
+*.tar.gz
