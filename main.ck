@@ -1,0 +1,25 @@
+//------------------------------------------------------------------------------
+// main.ck
+// desc: mic-delayed mosaic
+//------------------------------------------------------------------------------
+@import "mosaic.ck"
+
+// tweakables
+5::second => dur EXTRACT_DELAY;
+120::second => dur MIC_BUFFER_LEN; // rolling corpus buffer length
+600 => int MAX_POINTS;              // how many windows to keep in corpus
+
+// mic input (analysis only; do NOT connect to dac)
+adc => Gain micIn;
+1.0 => micIn.gain;
+
+// build mosaic
+Mosaic m;
+m.initMic(micIn, EXTRACT_DELAY, MIC_BUFFER_LEN, MAX_POINTS);
+
+// run
+spork ~ m.run();
+
+// keep alive
+while (true)
+    1::second => now;

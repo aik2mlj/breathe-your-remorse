@@ -1,12 +1,15 @@
 //------------------------------------------------------------------------------
 // name: mosaic.ck
-// desc: feature-based synthesizer using preMix as input (not mic)
-//       adapted from mosaic-synth-mic.ck
+// desc: feature-based synthesizer
+//       - original mode: match against pre-extracted feature file + play SndBuf
+//       - new mode: continuously extract features from mic with delay, match
+//         against a rolling corpus built from delayed mic windows, and play
+//         back from a rolling LiSa buffer
 //------------------------------------------------------------------------------
 
 public class Mosaic {
     //--------------------------------------------------------------------------
-    // unit analyzer network: will be connected to preMix in init()
+    // shared analysis network (input connected in init/initMic)
     //--------------------------------------------------------------------------
     FFT fft;
     FeatureCollector combo => blackhole;
@@ -15,7 +18,7 @@ public class Mosaic {
     fft =^ RMS rms =^ combo;
     fft =^ MFCC mfcc =^ combo;
 
-    // analysis parameters
+    // analysis parameters (same as extract)
     20 => mfcc.numCoeffs;
     10 => mfcc.numFilters;
 
@@ -27,8 +30,11 @@ public class Mosaic {
 
     int NUM_DIMENSIONS;
 
+    // RMS threshold: only synthesize when there's actual sound
+    0.0001 => float RMS_THRESHOLD;
+
     //--------------------------------------------------------------------------
-    // synthesis voices (output goes directly to dac to avoid feedback loop)
+    // ORIGINAL FILE-BASED SYNTH VOICES
     //--------------------------------------------------------------------------
     16 => int NUM_VOICES;
     SndBuf buffers[NUM_VOICES];
@@ -38,7 +44,7 @@ public class Mosaic {
     1.0 => mosaicOut.gain;
 
     //--------------------------------------------------------------------------
-    // data structures
+    // ORIGINAL FILE-BASED DATA
     //--------------------------------------------------------------------------
     int numPoints;
     int numCoeffs;
@@ -68,24 +74,45 @@ public class Mosaic {
     int knnResult[0];
     0 => int which;
 
-    // RMS threshold: only synthesize when there's actual sound
-    0.0001 => float RMS_THRESHOLD;
+    //--------------------------------------------------------------------------
+    // NEW MIC-DELAYED MODE STATE
+    //--------------------------------------------------------------------------
+    int micMode;
+    dur EXTRACT_DELAY;
+    dur MIC_BUFFER_LEN;
+
+    // record mic into LiSa
+    LiSa micBuf;
+    // delayed analysis tap
+    DelayA delayTap;
+
+    // rolling corpus
+    int MAX_POINTS;
+    int micCount;
+    int micWriteIdx;
+    int micFilled;
+
+    // store feature vectors + start positions (in samples) for each window
+    float micFeatures[0][0];
+    float micStartPosSamp[0];
 
     //--------------------------------------------------------------------------
-    // initialize with features file and preMix gain
+    // initialize ORIGINAL mode: features file + preMix
     //--------------------------------------------------------------------------
     fun int init(string featuresFile, Gain @preMix) {
-        // connect preMix to FFT for analysis
+        0 => micMode;
+
+        // connect analysis input
         preMix => fft;
 
-        // connect mosaic output to dac
+        // connect output
         mosaicOut => dac;
 
-        // now we can upchuck to get dimensions
+        // determine dims
         combo.upchuck();
         combo.fvals().size() => NUM_DIMENSIONS;
 
-        // setup voices
+        // setup voices (SndBuf-based)
         for (int i; i < NUM_VOICES; i++) {
             buffers[i] => envs[i] => pans[i] => mosaicOut;
             fft.size() => buffers[i].chunks;
@@ -93,7 +120,7 @@ public class Mosaic {
             envs[i].set(EXTRACT_TIME, EXTRACT_TIME / 2, 1, EXTRACT_TIME);
         }
 
-        // load file
+        // load feature file
         loadFile(featuresFile) @=> FileIO @fin;
         if (!fin.good()) {
             <<< "[mosaic] failed to load file" >>>;
@@ -115,18 +142,68 @@ public class Mosaic {
         new float[numCoeffs] @=> featureMean;
         new int[K] @=> knnResult;
 
-        // read data
+        // read + train
         readData(fin);
-
-        // train KNN
         knn.train(inFeatures, uids);
 
-        <<< "[mosaic] initialized with", numPoints, "windows" >>>;
+        <<< "[mosaic] initialized (file mode) with", numPoints, "windows" >>>;
         return true;
     }
 
     //--------------------------------------------------------------------------
-    // synthesis function
+    // initialize NEW mic-delayed mode
+    //
+    // micIn:  connect adc => Gain micIn externally (do NOT route to dac)
+    // delay:  EXTRACT_DELAY (e.g., 10::second)
+    // bufLen: rolling mic buffer length (e.g., 120::second)
+    // maxPts: corpus size (e.g., 600)
+    //--------------------------------------------------------------------------
+    fun int initMic(Gain @micIn, dur delay, dur bufLen, int maxPts) {
+        1 => micMode;
+
+        delay => EXTRACT_DELAY;
+        bufLen => MIC_BUFFER_LEN;
+        maxPts => MAX_POINTS;
+
+        // output
+        mosaicOut => dac;
+
+        // determine feature dims
+        combo.upchuck();
+        combo.fvals().size() => NUM_DIMENSIONS;
+
+        // --- LiSa rolling recorder ---
+        MIC_BUFFER_LEN => micBuf.duration;
+        // a little safety: allow multiple playback voices
+        NUM_VOICES => micBuf.maxVoices;
+        // connect mic input to LiSa for recording; connect LiSa output to
+        // mosaicOut so it is pulled by the audio graph (required for both
+        // recording and playback voices to work)
+        micIn => micBuf => mosaicOut;
+        1 => micBuf.record;
+
+        // connect mic input directly to FFT (no delay — instant response)
+        micIn => fft;
+
+        // allocate analysis temp buffers
+        new float[NUM_FRAMES][NUM_DIMENSIONS] @=> features;
+        new float[NUM_DIMENSIONS] @=> featureMean;
+
+        // allocate corpus arrays (fixed capacity)
+        new float[MAX_POINTS][NUM_DIMENSIONS] @=> micFeatures;
+        new float[MAX_POINTS] @=> micStartPosSamp;
+        0 => micCount;
+        0 => micWriteIdx;
+        0 => micFilled;
+
+        <<< "[mosaic] initialized (mic mode)", "delay:", (EXTRACT_DELAY / second), "sec",
+           "buffer:", (MIC_BUFFER_LEN / second), "sec", "maxPts:", MAX_POINTS >>>;
+
+        return true;
+    }
+
+    //--------------------------------------------------------------------------
+    // ORIGINAL synthesis: play from disk SndBuf (file mode)
     //--------------------------------------------------------------------------
     fun void synthesize(int uid) {
         buffers[which] @=> SndBuf @sound;
@@ -140,10 +217,6 @@ public class Mosaic {
         filename => sound.read;
         ((win.windowTime::second) / samp) $ int => sound.pos;
 
-        <<< "[mosaic] synth uid:", win.uid, "file:", filename, "pos:", sound.pos(),
-           "samples:", sound.samples() >>>;
-
-        // make sure sound plays
         1 => sound.gain;
         1 => sound.rate;
 
@@ -154,35 +227,75 @@ public class Mosaic {
     }
 
     //--------------------------------------------------------------------------
-    // main analysis/synthesis loop (spork this)
+    // NEW mic-mode synthesis: play from LiSa rolling buffer
+    // startPos: start position in samples (0..bufferSamples)
+    //--------------------------------------------------------------------------
+    fun void synthesizeMic(float startPos) {
+        // allocate a LiSa voice
+        micBuf.getVoice() => int v;
+        if (v < 0)
+            return;
+
+        // random stereo; start silent so rampUp can fade in
+        micBuf.pan(v, Math.random2f(-0.75, 0.75));
+        micBuf.voiceGain(v, 1.0);
+        micBuf.rate(v, 1.0);
+        micBuf.loop(v, 0);
+
+        // set play position and start
+        micBuf.playPos(v, startPos::samp);
+        // micBuf.play(v, 1);
+
+        // attack
+        micBuf.rampUp(v, EXTRACT_TIME);
+        EXTRACT_TIME => now;
+
+        // sustain
+        EXTRACT_TIME => now;
+
+        // release
+        micBuf.rampDown(v, EXTRACT_TIME);
+        EXTRACT_TIME => now;
+
+        // stop voice
+        // micBuf.play(v, 0);
+    }
+
+    //--------------------------------------------------------------------------
+    // run loop entrypoint (keeps old behavior)
     //--------------------------------------------------------------------------
     fun void run() {
-        <<< "[mosaic] analysis loop started" >>>;
+        if (micMode)
+            runMic();
+        else
+            runFile();
+    }
+
+    //--------------------------------------------------------------------------
+    // ORIGINAL analysis/synth loop (file mode)
+    //--------------------------------------------------------------------------
+    fun void runFile() {
+        <<< "[mosaic] analysis loop started (file mode)" >>>;
 
         while (true) {
+            // gather frames
             for (int frame; frame < NUM_FRAMES; frame++) {
                 combo.upchuck();
-                for (int d; d < NUM_DIMENSIONS; d++) {
+                for (int d; d < NUM_DIMENSIONS; d++)
                     combo.fval(d) => features[frame][d];
-                }
                 HOP => now;
             }
 
-            // compute means
+            // mean
             for (int d; d < NUM_DIMENSIONS; d++) {
                 0.0 => featureMean[d];
-                for (int j; j < NUM_FRAMES; j++) {
+                for (int j; j < NUM_FRAMES; j++)
                     features[j][d] +=> featureMean[d];
-                }
                 NUM_FRAMES /=> featureMean[d];
             }
 
-            // debug: print RMS value periodically
-            <<< "[mosaic] RMS:", featureMean[2] >>>;
-
-            // check RMS threshold - only trigger if there's sound
+            // RMS is featureMean[2] in this chain (Centroid, Flux, RMS, MFCC...)
             if (featureMean[2] > RMS_THRESHOLD) {
-                <<< "[mosaic] triggering synthesis!" >>>;
                 knn.search(featureMean, K, knnResult);
                 spork ~ synthesize(knnResult[Math.random2(0, knnResult.size() - 1)]);
             }
@@ -190,7 +303,161 @@ public class Mosaic {
     }
 
     //--------------------------------------------------------------------------
-    // load data file
+    // NEW analysis/synth loop (mic mode)
+    //
+    // Behavior:
+    // - analysis is performed on live mic signal (no delay)
+    // - every window, we:
+    //   (1) compute featureMean (delayed)
+    //   (2) add that feature + corresponding start position to corpus
+    //   (3) if RMS threshold and corpus has enough points, find K nearest
+    //       neighbors in corpus and replay one from LiSa
+    //--------------------------------------------------------------------------
+    fun void runMic() {
+        <<< "[mosaic] analysis loop started (mic mode)" >>>;
+
+        // wait one analysis window for FFT to fill
+        <<< "[mosaic] waiting", EXTRACT_TIME / second, "sec for FFT fill..." >>>;
+        EXTRACT_TIME => now;
+        <<< "[mosaic] entering analysis loop" >>>;
+
+        0 => int loopCount;
+
+        while (true) {
+            // gather frames (from delayed tap)
+            for (int frame; frame < NUM_FRAMES; frame++) {
+                combo.upchuck();
+                for (int d; d < NUM_DIMENSIONS; d++)
+                    combo.fval(d) => features[frame][d];
+                HOP => now;
+            }
+
+            // mean over frames
+            for (int d; d < NUM_DIMENSIONS; d++) {
+                0.0 => featureMean[d];
+                for (int j; j < NUM_FRAMES; j++)
+                    features[j][d] +=> featureMean[d];
+                NUM_FRAMES /=> featureMean[d];
+            }
+
+            // compute start position in LiSa for the current analysis window:
+            // record head is at "now"; analysis covered the last EXTRACT_TIME samples.
+            float bufSamples;
+            (MIC_BUFFER_LEN / samp) => bufSamples;
+            micBuf.recPos() / samp => float recPos;
+            recPos - (EXTRACT_TIME / samp) => float startPos;
+            // wrap
+            while (startPos < 0)
+                startPos + bufSamples => startPos;
+            while (startPos >= bufSamples)
+                startPos - bufSamples => startPos;
+
+            // add to corpus (rolling overwrite)
+            for (int d; d < NUM_DIMENSIONS; d++)
+                featureMean[d] => micFeatures[micWriteIdx][d];
+            startPos => micStartPosSamp[micWriteIdx];
+
+            micWriteIdx++;
+            if (micWriteIdx >= MAX_POINTS) {
+                0 => micWriteIdx;
+                1 => micFilled;
+            }
+
+            if (!micFilled)
+                micWriteIdx => micCount;
+            else
+                MAX_POINTS => micCount;
+
+            // periodic status print every 20 loops
+            loopCount++;
+            if (loopCount % 20 == 0) {
+                <<< "[mosaic] loop:", loopCount, "| RMS:", featureMean[2], "| corpus:", micCount,
+                   "| recPos:", recPos, "| startPos:", startPos >>>;
+            }
+
+            // trigger synth if enough points + above RMS
+            if (featureMean[2] > RMS_THRESHOLD && micCount > 8) {
+                // find K nearest neighbors (simple euclidean)
+                K => int k;
+                if (k < 1)
+                    1 => k;
+
+                // best lists
+                float bestDist[8];
+                int bestIdx[8];
+                // cap k to 8 here for simplicity
+                if (k > 8)
+                    8 => k;
+
+                for (int i; i < k; i++) {
+                    1e30 => bestDist[i];
+                    -1 => bestIdx[i];
+                }
+
+                // optional: avoid choosing the most recent few windows (self-match)
+                6 => int AVOID_RECENT;
+
+                for (int i; i < micCount; i++) {
+                    // compute "age" in ring terms
+                    // skip a handful of the most recent written windows
+                    // (only meaningful when filled; still okay when not filled)
+                    if (i == (micWriteIdx - 1 + MAX_POINTS) % MAX_POINTS)
+                        continue;
+
+                    // quick skip: avoid very recent indices near write head
+                    int ringDist;
+                    (micWriteIdx - i);
+                    if ((micWriteIdx - i) < 0)
+                        (micWriteIdx - i + MAX_POINTS) => ringDist;
+                    else
+                        (micWriteIdx - i) => ringDist;
+                    if (ringDist >= 0 && ringDist <= AVOID_RECENT)
+                        continue;
+
+                    // distance
+                    0.0 => float dist;
+                    for (int d; d < NUM_DIMENSIONS; d++) {
+                        (featureMean[d] - micFeatures[i][d]) => float diff;
+                        diff * diff +=> dist;
+                    }
+
+                    // insert into best list
+                    for (int b; b < k; b++) {
+                        if (dist < bestDist[b]) {
+                            // shift down
+                            for (k - 1 => int s; s > b; s--) {
+                                bestDist[s - 1] => bestDist[s];
+                                bestIdx[s - 1] => bestIdx[s];
+                            }
+                            dist => bestDist[b];
+                            i => bestIdx[b];
+                            break;
+                        }
+                    }
+                }
+
+                // choose one of the found neighbors at random
+                Math.random2(0, k - 1) => int pick;
+                if (bestIdx[pick] >= 0) {
+                    micStartPosSamp[bestIdx[pick]] => float playStart;
+                    <<< "[mosaic] SYNTH pick:", pick, "idx:", bestIdx[pick], "playStart:", playStart,
+                       "dist:", bestDist[pick] >>>;
+                    spork ~ synthesizeMic(playStart);
+                } else {
+                    <<< "[mosaic] above RMS but no valid neighbor found (pick:", pick,
+                       "bestIdx:", bestIdx[pick], ")" >>>;
+                }
+            } else if (loopCount % 20 == 0) {
+                if (featureMean[2] <= RMS_THRESHOLD)
+                    <<< "[mosaic] silent (RMS below threshold:", RMS_THRESHOLD, ")" >>>;
+                else
+                    <<< "[mosaic] corpus too small:", micCount, "need > 8" >>>;
+            }
+        }
+    }
+
+    //--------------------------------------------------------------------------
+    // load data file (file mode)
     //--------------------------------------------------------------------------
     fun FileIO loadFile(string filepath) {
         0 => numPoints;
@@ -220,7 +487,6 @@ public class Mosaic {
             tokenizer.next();
             numCoeffs++;
         }
-
         if (numCoeffs < 0)
             0 => numCoeffs;
 
@@ -235,7 +501,7 @@ public class Mosaic {
     }
 
     //--------------------------------------------------------------------------
-    // read the data
+    // read the data (file mode)
     //--------------------------------------------------------------------------
     fun void readData(FileIO fio) {
         fio.seek(0);
@@ -255,6 +521,7 @@ public class Mosaic {
                 tokenizer.set(line);
                 tokenizer.next() => filename;
                 tokenizer.next() => Std.atof => windowTime;
+
                 if (filename2state[filename] == 0) {
                     filename => string sss;
                     files << sss;
@@ -268,7 +535,6 @@ public class Mosaic {
                     tokenizer.next() => Std.atof => inFeatures[index][c];
                     c++;
                 }
-
                 index++;
             }
         }
