@@ -82,9 +82,9 @@ public class Mosaic {
     dur MIC_BUFFER_LEN;
 
     // record mic into LiSa
-    LiSa micBuf;
+    LiSa2 micBuf;
     // delayed analysis tap
-    DelayA delayTap;
+    // DelayA delayTap;
 
     // rolling corpus
     int MAX_POINTS;
@@ -165,8 +165,6 @@ public class Mosaic {
         bufLen => MIC_BUFFER_LEN;
         maxPts => MAX_POINTS;
 
-        // output
-        mosaicOut => dac;
 
         // determine feature dims
         combo.upchuck();
@@ -176,11 +174,21 @@ public class Mosaic {
         MIC_BUFFER_LEN => micBuf.duration;
         // a little safety: allow multiple playback voices
         NUM_VOICES => micBuf.maxVoices;
+        // random panning
+        <<< micBuf.channels() >>>;
+        for (int v; v < micBuf.maxVoices(); v++) {
+            // can pan across all available channels
+            // note LiSa.pan( voice, [0...channels-1] )
+            micBuf.pan(v, Math.random2f(0, micBuf.channels() - 1));
+        }
         // connect mic input to LiSa for recording; connect LiSa output to
         // mosaicOut so it is pulled by the audio graph (required for both
         // recording and playback voices to work)
-        micIn => micBuf => mosaicOut;
+        // micIn => micBuf => mosaicOut;
+        // mosaicOut => dac;
+        micIn => micBuf => dac;
         1 => micBuf.record;
+        // output
 
         // connect mic input directly to FFT (no delay — instant response)
         micIn => fft;
@@ -236,8 +244,6 @@ public class Mosaic {
         if (v < 0)
             return;
 
-        // random stereo; start silent so rampUp can fade in
-        micBuf.pan(v, Math.random2f(-0.75, 0.75));
         micBuf.voiceGain(v, 1.0);
         micBuf.rate(v, 1.0);
         micBuf.loop(v, 0);
