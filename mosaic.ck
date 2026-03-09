@@ -80,6 +80,7 @@ public class Mosaic {
     int micMode;
     dur EXTRACT_DELAY;
     dur MIC_BUFFER_LEN;
+    NRev rev[2];
 
     // record mic into LiSa
     LiSa2 micBuf;
@@ -184,9 +185,15 @@ public class Mosaic {
         // connect mic input to LiSa for recording; connect LiSa output to
         // mosaicOut so it is pulled by the audio graph (required for both
         // recording and playback voices to work)
+
         // micIn => micBuf => mosaicOut;
         // mosaicOut => dac;
-        micIn => micBuf => dac;
+
+        // reverb
+        0.1 => rev[0].mix;
+        0.1 => rev[1].mix;
+
+        micIn => micBuf => rev => dac;
         1 => micBuf.record;
         // output
 
