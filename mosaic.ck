@@ -31,7 +31,7 @@ public class Mosaic {
     int NUM_DIMENSIONS;
 
     // RMS threshold: only synthesize when there's actual sound
-    0.0001 => float RMS_THRESHOLD;
+    0.00005 => float RMS_THRESHOLD;
 
     //--------------------------------------------------------------------------
     // ORIGINAL FILE-BASED SYNTH VOICES
@@ -70,7 +70,8 @@ public class Mosaic {
     float featureMean[0];
 
     KNN2 knn;
-    2 => int K;
+    // K nearest
+    3 => int K;
     int knnResult[0];
     0 => int which;
 
@@ -92,6 +93,9 @@ public class Mosaic {
     int micCount;
     int micWriteIdx;
     int micFilled;
+
+    // avoid choosing the most recent few windows (self-match)
+    6 => int AVOID_RECENT;
 
     // store feature vectors + start positions (in samples) for each window
     float micFeatures[0][0];
@@ -176,7 +180,7 @@ public class Mosaic {
         // a little safety: allow multiple playback voices
         NUM_VOICES => micBuf.maxVoices;
         // random panning
-        <<< micBuf.channels() >>>;
+        // <<< micBuf.channels() >>>;
         for (int v; v < micBuf.maxVoices(); v++) {
             // can pan across all available channels
             // note LiSa.pan( voice, [0...channels-1] )
@@ -245,14 +249,16 @@ public class Mosaic {
     // NEW mic-mode synthesis: play from LiSa rolling buffer
     // startPos: start position in samples (0..bufferSamples)
     //--------------------------------------------------------------------------
-    fun void synthesizeMic(float startPos) {
+    fun void synthesizeMic(float startPos) { synthesizeMic(startPos, 1.0, 1.0); }
+
+    fun void synthesizeMic(float startPos, float gain, float rate) {
         // allocate a LiSa voice
         micBuf.getVoice() => int v;
         if (v < 0)
             return;
 
-        micBuf.voiceGain(v, 1.0);
-        micBuf.rate(v, 1.0);
+        micBuf.voiceGain(v, gain);
+        micBuf.rate(v, rate);
         micBuf.loop(v, 0);
 
         // set play position and start
@@ -407,9 +413,6 @@ public class Mosaic {
                     -1 => bestIdx[i];
                 }
 
-                // optional: avoid choosing the most recent few windows (self-match)
-                6 => int AVOID_RECENT;
-
                 for (int i; i < micCount; i++) {
                     // compute "age" in ring terms
                     // skip a handful of the most recent written windows
@@ -455,10 +458,25 @@ public class Mosaic {
                     micStartPosSamp[bestIdx[pick]] => float playStart;
                     <<< "[mosaic] SYNTH pick:", pick, "idx:", bestIdx[pick], "playStart:", playStart,
                        "dist:", bestDist[pick] >>>;
-                    spork ~ synthesizeMic(playStart);
+                    // randomize rate to 1 or -1
+                    1 => float rate;
+                    if (Math.random2f(0, 1) < 0.3)
+                        -1 => rate;
+                    spork ~ synthesizeMic(playStart, 1.0, rate);
                 } else {
                     <<< "[mosaic] above RMS but no valid neighbor found (pick:", pick,
                        "bestIdx:", bestIdx[pick], ")" >>>;
+                }
+            } else if (featureMean[2] < RMS_THRESHOLD && micCount > 8) {
+                // silent, then randomly sample from the corpus
+                if (Math.random2f(0, 1) < 0.4) {
+                    Math.random2(0, micCount - 1) => int pick;
+                    micStartPosSamp[pick] => float playStart;
+                    <<< "[mosaic] SILENT random pick:", pick, "playStart:", playStart >>>;
+                    Math.random2f(0.8, 1.2) => float rate;
+                    if (Math.random2f(0, 1) < 0.3)
+                        -rate => rate;
+                    spork ~ synthesizeMic(playStart, 0.5, rate);
                 }
             } else if (loopCount % 20 == 0) {
                 if (featureMean[2] <= RMS_THRESHOLD)
@@ -466,6 +484,17 @@ public class Mosaic {
                 else
                     <<< "[mosaic] corpus too small:", micCount, "need > 8" >>>;
             }
+        }
+    }
+
+    fun void randomizeRev() {
+        now => time start;
+        while (true) {
+            // synthesize a sine LFO for mix change
+            (now - start) / 1::second => float lfo;
+            (Math.sin(lfo) + 1.1) / 7 => rev[0].mix;
+            (Math.cos(lfo) + 1.1) / 7 => rev[1].mix;
+            1::samp => now;
         }
     }
 

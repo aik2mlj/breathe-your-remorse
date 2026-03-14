@@ -19,6 +19,7 @@ m.initMic(micIn, EXTRACT_DELAY, MIC_BUFFER_LEN, MAX_POINTS);
 
 // run
 spork ~ m.run();
+spork ~ m.randomizeRev();
 
 // keep alive
 while (true)
