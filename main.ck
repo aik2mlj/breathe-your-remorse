@@ -11,6 +11,8 @@
 
 // mic input (analysis only; do NOT connect to dac)
 adc => Gain micIn;
+adc => dac.chan(0);
+adc => dac.chan(1);
 1.0 => micIn.gain;
 
 // build mosaic

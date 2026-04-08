@@ -95,7 +95,7 @@ public class Mosaic {
     int micFilled;
 
     // avoid choosing the most recent few windows (self-match)
-    6 => int AVOID_RECENT;
+    16 => int AVOID_RECENT;
 
     // store feature vectors + start positions (in samples) for each window
     float micFeatures[0][0];
