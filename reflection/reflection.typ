@@ -1,0 +1,38 @@
+#set text(size: 12pt)
+#set par(justify: true)
+#show link: underline
+
+#let cline() = {
+  v(-3pt)
+  line(length: 100%, stroke: 0.7pt)
+  v(-5pt)
+}
+
+#align(center)[
+  = Reflection
+  Lejun Min\
+  ARTSTUDI 392
+]
+#cline()
+
+It is a fun journey iterating my project from the non-agentic version (project 1), to the prototype coded by Claude (project 2), and to the final version that I've mostly hand-coded and tuned for the performance and installation. As a recap, my general interest lies in sonic interaction, meaning that the audience should be able to participate with some sound they make, and co-lead an experience with the system.
+
+The very first question to ask is, naturally, what the role of technology (like AI) in my interactive system should be. Before joining this class, I've already tried in some directions, but the technology I used for my pieces is merely #strong[auxiliary]---for example, in the #link("https://lejun.site/portfolio/a-chan-conversation/")[performance] I did in CCRMA Open House Concert, I mixed and controlled spatial audio live with plugins and haptic devices. Although they are essential for the piece, they don't exhibit a certain degree of autonomy. Using a technology and letting it to speak on its own are quite different.
+
+This is why I really like the perspectives I learned from this class. I drew many inspirations from the readings. I'm especially intrigued by the one from #emph[Unthought: The Power of The Cognitive Nonconscious] by Katherine Hayles, where she includes nonconscious cognitive system into the graph of cognitive behaviors. This perfectly encompasses the kind of art works I wish to create where algorithms (either rule-based or ML-based) in machines co-create with the participants, extending their cognition to certain degree that may let them uncover something within. Another reading, #emph[On Purpose: An Enquiry Into the Possible Roles of the Computer in Art] by Harold Cohen made me realize that the creativity or artistry never originates from the machine, but always from the intention of the artist. The machine can only assist the intention, altering or enhancing it in some ways that serve right to the piece.
+
+The first iteration, my rule-based sonic meditation system is a minimal trial without all the fancy technology. Playing with it, and inviting my partner to also participate feel magical. I remember there is a golden rule in the research community of digital instrument design---be an engineer to tinker till one moment, then forget about all the mappings behind and be a player of your design. It is the interaction that actually engender meanings. I also enjoyed the moment when my classmates did the group sonic meditation with me. From intimate emotional interchange to socialized communication, I noticed how different settings and social context would shape the meaning of the same piece drastically different.
+
+I would say my second iteration that incorporates artificial agents for sonic meditation is more of an experiment than a well-intended art work. It originated more likely out of pure curiosity---what does it really mean when you meditate with AIs? If we could identify certain intentions beneath Pauline Oliveros's sonic meditation like group welfare cultivation and deep listening practice, how could one phrase the intention when meditating with AIs? I was really not satisfied with my outcome, mainly because I didn't find a good angle digesting the meaning of this interaction, besides being "cool". I felt … lonely when humming with the synthetic voices. Perhaps it's partly due to the machine listening and feedback being not nuanced enough, or perhaps it's fundamentally flawed by intention.
+
+Frustrated by my sonic agents, I realized what I wanted to have was never a direct negotiation with algorithms, but #strong[a self-referential conversation mediated by algorithms]. After all, that is what meditation originally means from my understanding. How then, can I shift the intention from creating an ensemble to closing a feedback loop for oneself? That is why I changed my focus from #strong[synthesis] to #strong[retrieval] in the final version. What happened to imbue new ideas to me was another class I was taking, #emph[Music and AI] taught by Prof.~Ge Wang. We did an assignment using audio feature extraction and information retrieval techniques to create sound mosaic. The methodology here may be traced back to the readymades of Marcel Duchamp. Suddenly my vision became clear. What is ready-made in my final version should solely come from the voice of the participant, thus closing the auditory feedback loop.
+
+Introducing---#emph[You, the Duration]---a sound installation that welcomes participants to experience a sonic conversation with themselves. Through real-time audio feature extraction, the program retrieves previously sampled audio clips based on their similarity to the current microphone input, and recombines them into an output stream. Just like how memory and behavior condition each other, the voice input becomes the output, delayed and altered, and again shapes the next inputting behavior. The algorithm now models a memory buffer that absorbs, morphs, and extrudes sound, inviting participants to attentively listen to and interact with what they have voiced.
+
+I would like to further add a metaphorical layer from my Buddhism training: the #emph[self] is not a vessel but a pattern---sustained by attachment, dissolved by forgetting. Each sound the participant makes is answered by an earlier version of itself; they hears their own choir returning, thinned or thickened by time. Old attachments fade as new ones surface. What the installation witnesses, then, is not a fixed identity but its restless motion---the clinging and the releasing, perpetually trading places.
+
+I filmed myself performing with the system (in the posted YouTube video below), which I really liked. It became a versatile "echo chamber" where one can experiment composition with their previous input. Singing is accompanied with delayed harmony, and speaking becomes haunted by my own ghost. Presenting it real-world, however, is another story. I did witness some friends of mine playing with it exactly like how I wanted, but most of the time, the participants would walk towards the microphone, say a word or two, then feel puzzled by the retrieved sound from people before them. Even if they stayed long enough, they might not be able to realize the retrieval only happens when they voice. I had to improvise some additional instructions on my wall label (e.g, try singing a song, speaking to it as if to a friend) to prolong the audiences' attention span. I also changed some parameters to make the retrieval more reactive and instant than what I would use for my own composition. Also, Some audiences asked me how the sound-responsive light works---which happened to be there so I put it behind my microphone, just thinking it would attract people.
+
+These interesting observations made me realize that although an art piece may carry thoughtful intention from its creator, the interpretation can hardly be the same by the viewers. It is indeed very hard to seamlessly integrate my intention into a technology-assisted system, but it might be even harder to convey that naturally to the user. I look forward to further improving this project and potentially making it into a series of installations with each a semantically different scene is set for the participants, since so far it feels too generic and not intentional enough. But it is a great journey.
+
+See the edited video of my performance and the documented installation reaction #link("https://www.youtube.com/watch?v=fzNWjs1TVN8")[here].
